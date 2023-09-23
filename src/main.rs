@@ -1,12 +1,24 @@
-use std::{env::args, fs, fmt::Display, path};
+use std::{
+    env::args,
+    fs,
+    path::{self, PathBuf},
+};
 
-use rusqlite::{Connection, Error};
-
+use rusqlite::Connection;
+pub mod actions;
 fn main() -> Result<(), String> {
-    match Connection::open("./projects.db") {
+    let mut path = dirs::data_local_dir().unwrap();
+    path.push("project-manager");
+    if !path.exists() {
+        fs::create_dir_all(&path).unwrap();
+    };
+    match Connection::open(path.join("project.db")) {
         Ok(conn) => {
-            let _ = create_table(&conn);
+            let _ = actions::create_table(&conn);
             let args = Vec::from(&args().collect::<Vec<String>>()[1..]);
+            if args.len() == 0 {
+                return Err("No arguments provided".to_owned());
+            }
             match &args[0] {
                 x if x == "add" => {
                     if args.len() < 3 {
@@ -16,92 +28,43 @@ fn main() -> Result<(), String> {
                     let path = args[2].clone();
                     match path::PathBuf::from(&path).canonicalize() {
                         Ok(path) => {
-                            if let Err(err) = add_to_table(&conn, &name, &path.to_str().to_owned().unwrap()) {
-                                return Err(err);
-                            };
+                            actions::add_to_table(&conn, &name, path.to_str().to_owned().unwrap())?
                         }
                         Err(err) => return Err(err.to_string()),
                     }
                 }
-                x if x == "list" => {
-                    let option:Option<String>;
-                    if args.len() < 2 {
-                        option=None;
-                    }else{
-                        option=Some(args[1].to_owned())
+                x if x == "list" => match actions::list_projects(&conn, &None) {
+                    Ok(rows) => {
+                        for row in rows {
+                            println!("{}", &row)
+                        }
                     }
-                    match list_projects(&conn,option) {
-                        Ok(rows) => for row in rows { println!("{}",row.get) },
-                        Err(err) => return Err(err),
-                    }
-
+                    Err(err) => return Err(err),
                 },
-                _ => return Err(String::from("Could not find call")),
+                x if x == "delete" => {
+                    if args.len() < 2 {
+                        return Err("Not enough arguments".to_owned());
+                    }
+                    let index = args[1].clone().parse::<i32>();
+                    if let Err(_) = index {
+                        return Err(
+                            "Please parse the integer id of the project to delete".to_owned()
+                        );
+                    }
+                    if let Err(err) = actions::delete_from_table(&conn, index.unwrap()) {
+                        return Err(err);
+                    }
+                }
+                x => match actions::list_projects(&conn, &Some(x.to_string())) {
+                    Ok(row) => match row.first() {
+                        Some(item) => print!("{}", item.path()),
+                        None => return Err("No row matched project name".to_owned()),
+                    },
+                    Err(err) => return Err(err),
+                },
             }
             Ok(())
         }
         Err(err) => Err(err.to_string()),
-    }
-}
-
-#[derive(Debug)]
-struct Row{
-    project_name:String,
-    path:String
-}
-
-impl Row {
-    fn project_name(&self) -> &str {
-        self.project_name.as_ref()
-    }
-
-    fn path(&self) -> &str {
-        self.path.as_ref()
-    }
-}
-
-impl Display for Row {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{}, {}",self.project_name,self.path))
-    }
-}
-
-fn list_projects(conn: &Connection, option: Option<String>) -> Result<Vec<Row>, String> {
-    let query=format!("select * from  projects {}",if let Some(search)=option{format!("where project_name like '%{}%';",search)}else {";".to_owned()});
-    println!("{}",&query);
-    match conn.prepare(&query){
-        Ok(mut finals) => {
-            let rows=finals.query_map([],|row|{
-                Ok(Row{
-                    project_name:row.get_unwrap::<&str,String>("project_name"),
-                    path:row.get_unwrap::<&str,String>("path")
-                })
-            }).unwrap().collect::<Vec<Result<Row,Error>>>();
-            Ok(rows.into_iter().map(|f|f.unwrap()).collect::<Vec<Row>>())
-        },
-        Err(err) => Err(err.to_string()),
-    }
-}
-
-fn add_to_table(conn: &Connection, name: &str, path: &str) -> Result<(), String> {
-    if let Err(err) = conn.execute("insert into projects(project_name,path) values(?1,?2)", [name, path]) {
-        Err(err.to_string())
-    } else {
-        Ok(())
-    }
-}
-
-fn create_table(conn: &Connection) -> Result<(), Error> {
-    if let Err(err) = conn.execute(
-        "create table if not exists projects(
-        id integer primary key autoincrement,
-        project_name text not null unique,
-        path text not null
-    )",
-        [],
-    ) {
-        Err(err)
-    } else {
-        Ok(())
     }
 }
