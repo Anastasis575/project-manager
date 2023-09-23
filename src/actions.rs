@@ -61,7 +61,7 @@ pub(crate) fn list_projects(conn: &Connection, option: &Option<String>) -> Resul
 pub fn add_to_table(conn: &Connection, name: &str, path: &str) -> Result<(), String> {
     if let Err(err) = conn.execute(
         "insert into projects(project_name,path) values(?1,?2)",
-        [name, path],
+        [name, &path.replace(r#"\\?\"#, "")],
     ) {
         Err(err.to_string())
     } else {
@@ -71,7 +71,7 @@ pub fn add_to_table(conn: &Connection, name: &str, path: &str) -> Result<(), Str
 
 pub fn create_table(conn: &Connection) -> Result<(), String> {
     if let Err(err) = conn.execute(
-        "create table if not exists projects(
+        "# table if not exists projects(
         id integer primary key autoincrement,
         project_name text not null unique,
         path text not null
